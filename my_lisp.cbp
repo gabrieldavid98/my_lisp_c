@@ -13,6 +13,7 @@
 				<Option compiler="gcc" />
 				<Compiler>
 					<Add option="-g" />
+					<Add directory="X:/Labs/C/my_lisp/" />
 				</Compiler>
 			</Target>
 			<Target title="Release">
@@ -34,6 +35,10 @@
 		<Unit filename="main.c">
 			<Option compilerVar="CC" />
 		</Unit>
+		<Unit filename="mpc.c">
+			<Option compilerVar="CC" />
+		</Unit>
+		<Unit filename="mpc.h" />
 		<Extensions>
 			<lib_finder disable_auto="1" />
 		</Extensions>
