@@ -69,7 +69,8 @@ enum
     LVAL_NUM,
     LVAL_ERR,
     LVAL_SYM,
-    LVAL_SEXPR
+    LVAL_SEXPR,
+    LVAL_QEXPR
 };
 
 typedef struct lval
@@ -117,6 +118,15 @@ lval* lval_sexpr(void)
     return v;
 }
 
+lval* lval_qexpr(void)
+{
+    lval* v = malloc(sizeof(lval));
+    v->type = LVAL_QEXPR;
+    v->count = 0;
+    v->cell = NULL;
+    return v;
+}
+
 void lval_del(lval* v)
 {
     switch (v->type)
@@ -129,6 +139,7 @@ void lval_del(lval* v)
     case LVAL_SYM:
         free(v->sym);
         break;
+    case LVAL_QEXPR:
     case LVAL_SEXPR:
         for (int i = 0; i < v->count; i++)
         {
@@ -169,11 +180,15 @@ lval* lval_read(mpc_ast_t* t)
         v = lval_sexpr();
     if (strstr(t->tag, "sexpr"))
         v = lval_sexpr();
+    if (strstr(t->tag, "qexpr"))
+        v = lval_qexpr();
 
     for (int i = 0; i < t->children_num; i++)
     {
         if (strcmp(t->children[i]->contents, "(") == 0) continue;
         if (strcmp(t->children[i]->contents, ")") == 0) continue;
+        if (strcmp(t->children[i]->contents, "{") == 0) continue;
+        if (strcmp(t->children[i]->contents, "}") == 0) continue;
         if (strcmp(t->children[i]->tag, "regex") == 0) continue;
 
         v = lval_add(v, lval_read(t->children[i]));
@@ -213,6 +228,9 @@ void lval_print(lval* v)
         break;
     case LVAL_SEXPR:
         lval_expr_print(v, '(', ')');
+        break;
+    case LVAL_QEXPR:
+        lval_expr_print(v, '{', '}');
         break;
     }
 }
@@ -286,6 +304,62 @@ lval* builtin_op(lval* v, char* op)
 
     lval_del(v);
     return x;
+}
+
+lval* builtin_head(lval* v)
+{
+    if (v->count != 1)
+    {
+        lval_del(v);
+        return lval_err("Function 'head' called with wrong number of arguments");
+    }
+
+    if (v->cell[0]->type != LVAL_QEXPR)
+    {
+        lval_del(v);
+        return lval_err("Function 'head' called with wrong type");
+    }
+
+    if (v->cell[0]->count == 0)
+    {
+        lval_del(v);
+        return lval_err("Function 'head' called with empty {}");
+    }
+
+    lval* head = lval_take(v, 0);
+
+    while (head->count > 1)
+    {
+        lval_del(lval_pop(head, 1));
+    }
+
+    return head;
+}
+
+lval* builtin_tail(lval* v)
+{
+    if (v->count != 1)
+    {
+        lval_del(v);
+        return lval_err("Function 'tail' called with wrong number of arguments");
+    }
+
+    if (v->cell[0]->type != LVAL_QEXPR)
+    {
+        lval_del(v);
+        return lval_err("Function 'tail' called with wrong type");
+    }
+
+    if (v->cell[0]->count == 0)
+    {
+        lval_del(v);
+        return lval_err("Function 'tail' called with empty {}");
+    }
+
+    lval* tail = lval_take(v, 0);
+
+    lval_del(lval_pop(tail, 0));
+    return tail;
 }
 
 lval* lval_eval(lval* v);
@@ -400,6 +474,7 @@ int main(int argc, char** argv)
     mpc_parser_t* number = mpc_new("number");
     mpc_parser_t* symbol = mpc_new("symbol");
     mpc_parser_t* sexpr = mpc_new("sexpr");
+    mpc_parser_t* qexpr = mpc_new("qexpr");
     mpc_parser_t* expr = mpc_new("expr");
     mpc_parser_t* lispy = mpc_new("lispy");
 
@@ -420,11 +495,17 @@ int main(int argc, char** argv)
                      | \"div\" \
                      | \"mod\" \
                      | \"min\" \
-                     | \"max\" ; \
+                     | \"max\" \
+                     | \"list\" \
+                     | \"head\" \
+                     | \"tail\" \
+                     | \"join\" \
+                     | \"eval\" ; \
             sexpr : '(' <expr>* ')' ; \
-            expr : <number> | <symbol> | <sexpr> ; \
+            qexpr : '{' <expr>* '}' ; \
+            expr : <number> | <symbol> | <sexpr> | <qexpr> ; \
             lispy : /^/ <expr>* /$/ ; \
-          ", integer, decimal, number, symbol, sexpr, expr, lispy);
+          ", integer, decimal, number, symbol, sexpr, qexpr, expr, lispy);
 
     puts("Lispy Version 0.0.0.0.1");
     puts("Press Ctrl+c to Exit\n");
@@ -451,6 +532,6 @@ int main(int argc, char** argv)
         free(input);
     }
 
-    mpc_cleanup(7, integer, decimal, number, symbol, sexpr, expr, lispy);
+    mpc_cleanup(8, integer, decimal, number, symbol, sexpr, qexpr, expr, lispy);
     return 0;
 }
