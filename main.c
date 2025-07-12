@@ -2,6 +2,9 @@
 #include <stdlib.h>
 #include "mpc.h"
 
+#define LASSERT(args, cond, err) \
+    if (!(cond)) { lval_del(args); return lval_err(err); }
+
 #ifdef _WIN32
 #include <string.h>
 
@@ -82,6 +85,10 @@ typedef struct lval
     int count;
     struct lval** cell;
 } lval;
+
+void lval_print(lval* v);
+lval* lval_eval(lval* v);
+lval* lval_join(lval* x, lval* y);
 
 lval* lval_num(long num)
 {
@@ -197,8 +204,6 @@ lval* lval_read(mpc_ast_t* t)
     return v;
 }
 
-void lval_print(lval* v);
-
 void lval_expr_print(lval* v, char open, char close)
 {
     putchar(open);
@@ -308,23 +313,12 @@ lval* builtin_op(lval* v, char* op)
 
 lval* builtin_head(lval* v)
 {
-    if (v->count != 1)
-    {
-        lval_del(v);
-        return lval_err("Function 'head' called with wrong number of arguments");
-    }
-
-    if (v->cell[0]->type != LVAL_QEXPR)
-    {
-        lval_del(v);
-        return lval_err("Function 'head' called with wrong type");
-    }
-
-    if (v->cell[0]->count == 0)
-    {
-        lval_del(v);
-        return lval_err("Function 'head' called with empty {}");
-    }
+    LASSERT(v, v->count == 1,
+            "Function 'head' called with wrong number of arguments");
+    LASSERT(v, v->cell[0]->type == LVAL_QEXPR,
+            "Function 'head' called with wrong type");
+    LASSERT(v, v->cell[0]->count != 0,
+            "Function 'head' called with empty {}");
 
     lval* head = lval_take(v, 0);
 
@@ -338,23 +332,12 @@ lval* builtin_head(lval* v)
 
 lval* builtin_tail(lval* v)
 {
-    if (v->count != 1)
-    {
-        lval_del(v);
-        return lval_err("Function 'tail' called with wrong number of arguments");
-    }
-
-    if (v->cell[0]->type != LVAL_QEXPR)
-    {
-        lval_del(v);
-        return lval_err("Function 'tail' called with wrong type");
-    }
-
-    if (v->cell[0]->count == 0)
-    {
-        lval_del(v);
-        return lval_err("Function 'tail' called with empty {}");
-    }
+    LASSERT(v, v->count == 1,
+            "Function 'tail' called with wrong number of arguments");
+    LASSERT(v, v->cell[0]->type == LVAL_QEXPR,
+            "Function 'tail' called with wrong type");
+    LASSERT(v, v->cell[0]->count != 0,
+            "Function 'tail' called with empty {}");
 
     lval* tail = lval_take(v, 0);
 
@@ -362,7 +345,66 @@ lval* builtin_tail(lval* v)
     return tail;
 }
 
-lval* lval_eval(lval* v);
+lval* builtin_list(lval* v)
+{
+    v->type = LVAL_QEXPR;
+    return v;
+}
+
+lval* builtin_eval(lval* v)
+{
+    LASSERT(v, v->count == 1,
+            "Function 'eval' called with wrong number of arguments");
+    LASSERT(v, v->cell[0]->type == LVAL_QEXPR,
+            "Function 'eval' called with wrong type");
+
+    lval* vv = lval_take(v, 0);
+    vv->type = LVAL_SEXPR;
+
+    return lval_eval(vv);
+}
+
+lval* builtin_join(lval* v)
+{
+    for (int i = 0; i < v->count; i++)
+    {
+        LASSERT(v, v->cell[0]->type == LVAL_QEXPR,
+                "Function 'join' called with wrong type");
+    }
+
+    lval* vv = lval_pop(v, 0);
+
+    while (v->count)
+    {
+        vv = lval_join(vv, lval_pop(v, 0));
+    }
+
+    lval_del(v);
+    return vv;
+}
+
+lval* lval_join(lval* x, lval* y)
+{
+    while (y->count)
+    {
+        x = lval_add(x, lval_pop(y, 0));
+    }
+
+    lval_del(y);
+    return x;
+}
+
+lval* builtin(lval* v, char* func)
+{
+    if (strcmp("list", func) == 0) return builtin_list(v);
+    if (strcmp("head", func) == 0) return builtin_head(v);
+    if (strcmp("tail", func) == 0) return builtin_tail(v);
+    if (strcmp("join", func) == 0) return builtin_join(v);
+    if (strcmp("eval", func) == 0) return builtin_eval(v);
+    if (strstr("+-/*", func)) return builtin_op(v, func);
+    lval_del(v);
+    return lval_err("Unknown Function!");
+}
 
 lval* lval_eval_sexpr(lval* v)
 {
@@ -391,7 +433,7 @@ lval* lval_eval_sexpr(lval* v)
         return lval_err("S-expression Does not start with symbol!");
     }
 
-    lval* result = builtin_op(v, f->sym);
+    lval* result = builtin(v, f->sym);
     lval_del(f);
 
     return result;
@@ -404,68 +446,6 @@ lval* lval_eval(lval* v)
 
     return v;
 }
-
-/*
-lval eval_op(lval x, char* op, lval y)
-{
-    if (x.type == LVAL_ERR) return x;
-    if (y.type == LVAL_ERR) return y;
-
-    if (strcmp(op, "+") == 0 || strcmp(op, "add") == 0) return lval_num(x.num + y.num);
-    if (strcmp(op, "-") == 0 || strcmp(op, "sub") == 0) return lval_num(x.num - y.num);
-    if (strcmp(op, "*") == 0 || strcmp(op, "mul") == 0) return lval_num(x.num * y.num);
-    if (strcmp(op, "/") == 0 || strcmp(op, "div") == 0)
-    {
-        return y.num == 0 ? lval_err(LERR_DIV_ZERO) : lval_num(x.num / y.num);
-    }
-
-    if (strcmp(op, "%") == 0 || strcmp(op, "mod") == 0)
-    {
-        return y.num == 0 ? lval_err(LERR_DIV_ZERO) : lval_num(x.num % y.num);
-    }
-
-    if (strcmp(op, "^") == 0) return lval_num(pow_l(x.num, y.num));
-    if (strcmp(op, "min") == 0) return lval_num(min_l(x.num, y.num));
-    if (strcmp(op, "max") == 0) return lval_num(max_l(x.num, y.num));
-
-    return lval_err(LERR_BAD_OP);
-}
-
-lval eval(mpc_ast_t* t)
-{
-    if (strstr(t->tag, "integer"))
-    {
-        errno = 0;
-        long num = strtol(t->contents, NULL, 10);
-
-        return errno != ERANGE ? lval_num(num) : lval_err(LERR_BAD_NUM);
-    }
-
-    char* op = t->children[1]->contents;
-    lval v = eval(t->children[2]);
-
-    int arg_num = 0;
-    for (int i = 2; t->children[i] != t->children[t->children_num - 1]; i++)
-    {
-        arg_num++;
-    }
-
-    if (strcmp(op, "-") == 0 && arg_num == 1 && v.type != LVAL_ERR)
-    {
-        v.num *= -1;
-        return v;
-    }
-
-    int i = 3;
-    while(strstr(t->children[i]->tag, "expr"))
-    {
-        v = eval_op(v, op, eval(t->children[i]));
-        i++;
-    }
-
-    return v;
-}
-*/
 
 int main(int argc, char** argv)
 {
